@@ -193,7 +193,7 @@ pub async fn login_user(state: Data<AppState>,  body: Json<CreateLoginBody>) -> 
                     .verify()
                     .unwrap();
                 if is_valid {
-                    let claims = TokenClaims{id_user: login.id_user,username: login.username.clone(), email: login.email.clone(), phone_number: login.phone_number.clone(), role: login.role.clone()};
+                    let claims = TokenClaims{id_user: login.id_user,username: String::from(&login.username), email: String::from(&login.email), phone_number: String::from(&login.phone_number), role: String::from(&login.role)};
                     let token_str = claims.sign_with_key(&jwt_secret).unwrap();
                     custom_respond.jwt = token_str;
                     custom_respond.status = String::from("jwt Obtained");
