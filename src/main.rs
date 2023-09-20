@@ -1,7 +1,7 @@
 use actix_web::{web::Data, App, HttpServer};
 use dotenv::dotenv;
 use sqlx::{postgres::PgPoolOptions, Pool, Postgres};
-
+use actix_cors::Cors;
 mod services;
 use services::{create_user_article, fetch_user_articles, fetch_users, login_user, register_user};
 
@@ -9,7 +9,15 @@ pub struct AppState {
     db: Pool<Postgres>
 }
 
-
+fn cors_middleware() -> Cors {
+    Cors::default()
+        .allow_any_origin() // Replace with your frontend's URL
+        .allow_any_method()
+        .allow_any_header()
+        .max_age(3600) // Specify the maximum age of preflight requests (in seconds)
+        
+        
+}
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -23,6 +31,7 @@ async fn main() -> std::io::Result<()> {
 
     HttpServer::new(move || {
         App::new()
+            .wrap(cors_middleware())
             .app_data(Data::new(AppState { db: pool.clone() }))
             .service(fetch_users)
             .service(fetch_user_articles)
@@ -30,7 +39,7 @@ async fn main() -> std::io::Result<()> {
             .service(login_user)
             .service(register_user)
     })
-    .bind(("127.0.0.1", 8080))?
+    .bind(("192.168.101.145", 8080))?
     .run()
     .await
 }
