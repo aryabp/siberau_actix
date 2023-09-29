@@ -1,6 +1,6 @@
 use actix_web::{
-    post, 
-    web::{Data, Json},
+    get, post, 
+    web::{Data, Json, Path},
     Responder, HttpResponse
 };
 use serde::{Deserialize, Serialize};
