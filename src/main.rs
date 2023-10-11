@@ -82,7 +82,7 @@ async fn main() -> std::io::Result<()> {
             .service(rename_file)
             .service(delete_file)
     })
-    .bind(("192.168.1.6", 8080))?
+    .bind(("127.0.0.1", 8080))?
     .run()
     .await
 }
