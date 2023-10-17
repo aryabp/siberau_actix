@@ -133,4 +133,3 @@ pub async fn login_user(state: Data<AppStatex>, body: Json<CreateLoginBody>) -> 
     }
     
 }
-/*#[post(/fileacces)]*/

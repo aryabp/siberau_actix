@@ -84,7 +84,6 @@ pub async fn search_directory(
     body: Json<CreateSearchBody>,
 ) -> impl Responder {
     
-
     let start_time = Instant::now();
 
     let mut results: Vec<_> = Vec::new();
@@ -138,7 +137,6 @@ pub async fn search_directory(
 
     let end_time = Instant::now();
     println!("Elapsed time: {:?}", end_time - start_time);
-
     // Sort by best match first.
     let mut tuples: Vec<(usize, _)> = fuzzy_scores.iter().enumerate().collect();
     tuples.sort_by(|a, b| b.1.cmp(a.1));
@@ -147,7 +145,5 @@ pub async fn search_directory(
         .into_iter()
         .map(|(index, _)| results[index].clone())
         .collect();
-        
-    
     HttpResponse::Ok().json(sorted_result)
 }

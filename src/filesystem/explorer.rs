@@ -2,10 +2,13 @@ use std::fs;
 use std::fs::read_dir;
 use std::ops::Deref;
 use std::path::Path;
+use actix_files::NamedFile;
 
 use notify::event::CreateKind;
+use std::io::Write;
+use actix_multipart::Multipart;
+use futures::{StreamExt, TryStreamExt};
 
-//use crate::errors::Error;
 use crate::filesystem::cache::FsEventHandler;
 //use crate::filesystem::fs_utils;
 use crate::filesystem::fs_utils::get_mount_point;
@@ -16,8 +19,8 @@ use serde::Deserialize;
 
 use actix_web::{
     post, 
-    web::{Data, Json},
-    Responder, HttpResponse
+    web::{self,Data, Json},
+    Responder, HttpResponse, Result
 };
 
 #[derive(Deserialize)]
@@ -29,38 +32,11 @@ pub struct CreateSwitchBody {
     pub old_path: String,
     pub new_path: String,
 }
-/* 
-#[derive(Serialize)]
-
-pub struct SendDirectory {
-    pub 
-}*/
-
-/// Opens a file at the given path. Returns a string if there was an error.
-// NOTE(conaticus): I tried handling the errors nicely here but Tauri was mega cringe and wouldn't let me nest results in async functions, so used string error messages instead.
-/*
-#[post("/openfile")]
-pub async fn open_file(body: Json<CreateCommonBody>) -> impl Responder {
-    let output_res = open::commands(body.path)[0].output();
-    let output = match output_res {
-        Ok(output) => output,
-        Err(err) => {
-            let err_msg = format!("Failed to get open command output: {}", err);
-            return Err("Denied");
-        }
-    };
-
-    if output.status.success() {
-        return Ok("Success!");
-    }
-
-    let err_msg = String::from_utf8(output.stderr).unwrap_or(String::from("Failed to open file and deserialize stderr."));
-    Err("Denied")
-}*/
 
 /// Searches and returns the files in a given directory. This is not recursive.
 #[post("/opendirectory")]
 pub async fn open_directory(body: Json<CreateCommonBody>) -> Result<HttpResponse, actix_web::Error> {
+    
     let directory_result = read_dir(&body.path);
     
     match directory_result {
@@ -161,5 +137,57 @@ pub async fn delete_file(state_mux: Data<StateSafe>, body: Json<CreateCommonBody
             },
             Err(_) => HttpResponse::BadRequest(),
         }
-    
+}
+
+#[post("/downloadfile")]
+pub async fn download_file(body: Json<CreateCommonBody>) -> Result<NamedFile> {
+    Ok(NamedFile::open(&body.path)?)
+}
+
+async fn save_file(mut payload: Multipart) -> Option<bool> {
+    // iterate over multipart stream
+    while let Ok(Some(mut field)) = payload.try_next().await {
+        
+        let content_type = field.content_disposition();
+        let file_path = content_type.get_name().unwrap();
+        let file_name = content_type.get_filename().unwrap();
+        if file_path.is_empty() && file_name.is_empty()  {
+            break
+        }
+        let filepath: String = format!("{}/{}", file_path,file_name);
+
+        // File::create is blocking operation, use threadpool
+        
+        let mut f = web::block(|| std::fs::File::create(filepath))
+            .await
+            .unwrap()
+            .unwrap();
+        
+        // Field in turn is stream of *Bytes* object
+        while let Some(chunk) = field.next().await {
+            let data = chunk.unwrap();
+            // filesystem operations are blocking, we have to use threadpool
+            f = web::block(move || f.write_all(&data).map(|_| f))
+                .await
+                .unwrap()
+                .unwrap();
+        }
+    }
+    Some(true)
+}
+
+#[post("/uploadfile")]
+pub async fn upload_file(payload: Multipart) -> impl Responder{
+    let upload_status = save_file(payload).await;
+
+    match upload_status {
+        Some(true) => {
+            HttpResponse::Ok()
+                .content_type("text/plain")
+                .body("update_succeeded")
+        }
+        _ => HttpResponse::BadRequest()
+            .content_type("text/plain")
+            .body("update_failed"),
+    }
 }

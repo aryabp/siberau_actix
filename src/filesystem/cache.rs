@@ -5,12 +5,8 @@ use notify::event::{CreateKind, ModifyKind, RenameMode};
 use notify::Event;
 use std::fs::{self, File};
 use std::io::{BufReader, Write};
-use std::ops::Deref;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, MutexGuard};
-use std::time::Duration;
-use tokio::time;
-
+use std::sync::MutexGuard;
 use actix_web::web::Data;
 
 lazy_static! {
@@ -57,13 +53,15 @@ impl FsEventHandler {
             CreateKind::Folder => DIRECTORY,
             _ => return, // Other options are weird lol
         }
-            .to_string();
+        .to_string();
 
         let file_path = path.to_string_lossy().to_string();
-        current_volume.entry(filename).or_insert_with(|| vec![CachedPath {
-            file_path,
-            file_type,
-        }]);
+        current_volume.entry(filename).or_insert_with(|| {
+            vec![CachedPath {
+                file_path,
+                file_type,
+            }]
+        });
     }
 
     pub fn handle_delete(&self, path: &Path) {
@@ -103,10 +101,12 @@ impl FsEventHandler {
         let file_type = if new_path.is_dir() { DIRECTORY } else { FILE };
 
         let path_string = new_path.to_string_lossy().to_string();
-        current_volume.entry(filename).or_insert_with(|| vec![CachedPath {
-            file_path: path_string,
-            file_type: String::from(file_type),
-        }]);
+        current_volume.entry(filename).or_insert_with(|| {
+            vec![CachedPath {
+                file_path: path_string,
+                file_type: String::from(file_type),
+            }]
+        });
     }
 
     pub fn handle_event(&mut self, event: Event) {
@@ -127,24 +127,6 @@ impl FsEventHandler {
     }
 }
 
-/// Starts a constant interval loop where the cache is updated every ~30 seconds.
-pub fn run_cache_interval(state_mux: &Data<StateSafe>) {
-    let state_clone = Arc::clone(state_mux.deref().deref());
-
-    tokio::spawn(async move {
-        // We use tokio spawn because async closures with std spawn is unstable
-        let mut interval = time::interval(Duration::from_secs(60));
-        interval.tick().await; // Wait 30 seconds before doing first re-cache
-
-        loop {
-            interval.tick().await;
-
-            let guard = &mut state_clone.lock().unwrap();
-            save_to_cache(guard);
-        }
-    });
-}
-
 /// This takes in an Arc<Mutex<AppState>> and calls `save_to_cache` after locking it.
 pub fn save_system_cache(state_mux: &Data<StateSafe>) {
     let state = &mut state_mux.lock().unwrap();
@@ -155,24 +137,21 @@ pub fn save_system_cache(state_mux: &Data<StateSafe>) {
 /// This needs optimising.
 fn save_to_cache(state: &mut MutexGuard<AppState>) {
     let serialized_cache = serde_bencode::to_string(&state.system_cache).unwrap();
-    
     let mut file = fs::OpenOptions::new()
         .write(true)
         .truncate(true)
         .open(&CACHE_FILE_PATH[..])
         .unwrap();
-
     file.write_all(
         &zstd::encode_all(serialized_cache.as_bytes(), 0)
             .expect("Failed to compress cache contents.")[..],
     )
-        .unwrap();
+    .unwrap();
 }
 
 /// Reads and decodes the cache file and stores it in memory for quick access.
 /// Returns false if the cache was unable to deserialize.
 pub fn load_system_cache(state_mux: &Data<StateSafe>) -> bool {
-    
     let state = &mut state_mux.lock().expect("Failed to lock mutex");
 
     let cache_file = File::open(&CACHE_FILE_PATH[..]).expect("Failed to open cache file");

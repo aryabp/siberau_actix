@@ -1,8 +1,9 @@
 use crate::filesystem::cache::{
-    load_system_cache, run_cache_interval, save_system_cache, FsEventHandler, CACHE_FILE_PATH,
+    load_system_cache, save_system_cache, FsEventHandler, CACHE_FILE_PATH,
 };
 use crate::filesystem::{bytes_to_gb, DIRECTORY, FILE};
 use crate::{CachedPath, StateSafe};
+
 use notify::{RecursiveMode, Watcher};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -12,25 +13,23 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::{fs, thread};
 use sysinfo::{Disk, DiskExt, System, SystemExt};
-
 use tokio::task::block_in_place;
 use walkdir::WalkDir;
 
+use actix_web::{post, web::Data, HttpResponse, Responder};
 
+#[derive(Serialize, Deserialize, Default)]
+pub struct Timer {
+    pub timestamp: i64,
+}
 
-use actix_web::{
-    post, 
-    web::Data,
-    Responder, HttpResponse
-};
-
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize, Default, Clone)]
 pub struct Volume {
-    name: String,
-    mountpoint: PathBuf,
-    available_gb: u16,
-    used_gb: u16,
-    total_gb: u16,
+    pub name: String,
+    pub mountpoint: PathBuf,
+    pub available_gb: u16,
+    pub used_gb: u16,
+    pub total_gb: u16,
 }
 
 impl Volume {
@@ -129,39 +128,43 @@ pub enum DirectoryChild {
 /// If there is a cache stored on volume it is loaded.
 /// If there is no cache stored on volume, one is created as well as stored in memory.
 #[post("/getvolume")]
-pub async fn get_volumes(state_mux: Data<StateSafe>) -> impl Responder {
+pub async fn get_volumes(
+    state_mux: Data<StateSafe>,
+    state_vol: Data<Arc<Mutex<Vec<Volume>>>>,
+    state_timer: Data<Arc<Mutex<Timer>>>
+) -> impl Responder {
+    println!("get_volumes tertrigger");
+    let mut m = {state_vol.lock().unwrap()};
+    let n = m.first().unwrap();
+    let mut interval = {state_timer.lock().unwrap()};
     
-    let mut sys = System::new_all();
-    sys.refresh_all();
-
-    let mut cache_exists = fs::metadata(&CACHE_FILE_PATH[..]).is_ok();
-    if cache_exists {
-        
-        cache_exists = load_system_cache(&state_mux);
+    if &n.name == "" || chrono::Utc::now().timestamp() - interval.timestamp >= 120 {
+        interval.timestamp = chrono::Utc::now().timestamp();
+        let mut sys = System::new_all();
+        sys.refresh_all();
+        let mut cache_exists = fs::metadata(&CACHE_FILE_PATH[..]).is_ok();
+        if cache_exists {
+            cache_exists = load_system_cache(&state_mux);
+        } else {
+            File::create(&CACHE_FILE_PATH[..]).unwrap();
+        }
+        let volumes: Vec<Volume> = sys
+            .disks()
+            .par_iter()
+            .map(|disk| {
+                let volume = Volume::from(disk);
+                if !cache_exists {
+                    volume.create_cache(&state_mux);
+                }
+                volume.watch_changes(&state_mux);
+                volume
+            })
+            .collect();
+        save_system_cache(&state_mux);
+        m.clone_from(&volumes);
+        interval.timestamp = chrono::Utc::now().timestamp();
+        HttpResponse::Ok().json(volumes)
     } else {
-        
-        File::create(&CACHE_FILE_PATH[..]).unwrap();
+        HttpResponse::Ok().json(m.clone())
     }
-
-    let volumes: Vec<Volume> = sys
-        .disks()
-        .iter()
-        .map(|disk| {
-            let volume = Volume::from(disk);
-
-            if !cache_exists {
-                volume.create_cache(&state_mux);
-            }
-
-            volume.watch_changes(&state_mux);
-            volume
-        })
-        .collect();
-
-    save_system_cache(&state_mux);
-    run_cache_interval(&state_mux);
-    
-    HttpResponse::Ok().json(volumes)
-    
-    
 }
