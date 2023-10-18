@@ -1,19 +1,23 @@
-mod services;
 mod filesystem;
 mod search;
+mod services;
 
 use actix_cors::Cors;
 use actix_web::{web::Data, App, HttpServer};
 use dotenv::dotenv;
 use sqlx::{postgres::PgPoolOptions, Pool, Postgres};
-use services::{login_user, register_user};
+
 use filesystem::explorer::{
     create_directory, create_file, delete_file, download_file, open_directory, rename_file,
     upload_file,
 };
-use filesystem::volume::{get_volumes, Volume, Timer};
+
+use filesystem::volume::{get_volumes, Timer, Volume};
 use search::search_directory;
 use serde::{Deserialize, Serialize};
+
+use services::{change_user, delete_user, login_user, otp_form, otp_self, register_user, OtpData, OtpDataForm};
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -70,21 +74,35 @@ async fn main() -> std::io::Result<()> {
         .connect(&database_url)
         .await
         .expect("Error building a connection pool");
-    let state = Arc::new(Mutex::new(AppState::default()));
+    let cache_mem = Arc::new(Mutex::new(AppState::default()));
+
+    let mut vec_otp_form = Vec::new();
+    vec_otp_form.push(OtpDataForm::default());
+    let otpstate_form = Arc::new(Mutex::new(vec_otp_form));
+    let mut vec_otp = Vec::new();
+    vec_otp.push(OtpData::default());
+    let otpstate = Arc::new(Mutex::new(vec_otp));
     let mut volumes = Vec::new();
     volumes.push(Volume::default());
     let volume = Arc::new(Mutex::new(volumes));
+
     let timer = Arc::new(Mutex::new(Timer::default()));
 
     HttpServer::new(move || {
         App::new()
             .wrap(cors_middleware())
             .app_data(Data::new(AppStatex { db: pool.clone() }))
-            .app_data(Data::new(state.clone()))
+            .app_data(Data::new(cache_mem.clone()))
             .app_data(Data::new(volume.clone()))
             .app_data(Data::new(timer.clone()))
+            .app_data(Data::new(otpstate.clone()))
+            .app_data(Data::new(otpstate_form.clone()))
             .service(login_user)
             .service(register_user)
+            .service(otp_form)
+            .service(otp_self)
+            .service(change_user)
+            .service(delete_user)
             .service(get_volumes)
             .service(open_directory)
             .service(search_directory)

@@ -162,7 +162,6 @@ pub async fn get_volumes(
             .collect();
         save_system_cache(&state_mux);
         m.clone_from(&volumes);
-        interval.timestamp = chrono::Utc::now().timestamp();
         HttpResponse::Ok().json(volumes)
     } else {
         HttpResponse::Ok().json(m.clone())
