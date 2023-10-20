@@ -83,7 +83,7 @@ pub struct CreateRegisterBody {
     pub password: String,
     pub phone_number: String,
     pub role: String,
-    pub otp: i32,
+    pub otp: String,
 }
 
 #[derive(Deserialize)]
@@ -93,13 +93,13 @@ pub struct CreateSettingsBody {
     pub new_email: String,
     pub password: String,
     pub phone_number: String,
-    pub otp: i32,
+    pub otp: String,
 }
 
 #[derive(Deserialize)]
 pub struct CreateDeleteBody {
     pub email: String,
-    pub otp: i32,
+    pub otp: String,
 }
 
 #[derive(Deserialize)]
@@ -117,6 +117,11 @@ pub async fn register_user(
     body: Json<CreateRegisterBody>,
     otp_state: Data<Arc<Mutex<Vec<OtpDataForm>>>>,
 ) -> impl Responder {
+    let mut convert_otp:i32 = 0;
+    match body.otp.parse::<i32>() {
+        Ok(x) => convert_otp = x,
+        Err(_) => eprintln!(" Invalid Type")
+    }
     match otp_state.lock() {
         Ok(x) => {
             let rethrived_otp: Vec<OtpDataForm> = x
@@ -127,7 +132,7 @@ pub async fn register_user(
             let otpval = rethrived_otp.first();
             match otpval {
                 Some(x) => {
-                    if x.otp == body.otp && x.phone_number == body.phone_number && x.username == body.username && x.role == body.role {
+                    if x.otp == convert_otp && x.phone_number == body.phone_number && x.username == body.username && x.role == body.role {
                         if chrono::offset::Utc::now().timestamp() - x.timestamp < 300 {
                             let password = body.password.as_bytes();
                             let salt = SaltString::generate(&mut OsRng);
@@ -167,13 +172,11 @@ pub async fn register_user(
 }
 #[post("/login")]
 pub async fn login_user(state: Data<AppStatex>, body: Json<CreateLoginBody>) -> impl Responder {
-    let jwt_secret: Hmac<Sha256> = Hmac::new_from_slice(
-        std::env::var("JWT_SECRET")
-            .expect("JWT_SECRET must be set!")
-            .as_bytes(),
-    )
-    .unwrap();
-
+    let jwt_secret: Hmac<Sha256> = match std::env::var("JWT_SECRET") {
+        Ok(secret) => Hmac::new_from_slice(secret.as_bytes()).expect("Invalid secret format!"),
+        Err(_) => panic!("JWT_SECRET environment variable must be set!"),
+    };
+    
     match sqlx::query_as::<_, Login>("SELECT * from table_user WHERE email=$1")
         .bind(body.email.to_string())
         .fetch_all(&state.db)
@@ -325,6 +328,11 @@ pub async fn change_user(
     body: Json<CreateSettingsBody>,
     otp_state: Data<Arc<Mutex<Vec<OtpData>>>>,
 ) -> impl Responder {
+    let mut convert_otp:i32 = 0;
+    match body.otp.parse::<i32>() {
+        Ok(x) => convert_otp = x,
+        Err(_) => eprintln!(" Invalid Type")
+    }
     match otp_state.lock() {
         Ok(x) => {
             let rethrived_otp: Vec<OtpData> = x
@@ -335,7 +343,7 @@ pub async fn change_user(
             let otpval = rethrived_otp.first();
             match otpval {
                 Some(x) => {
-                    if x.otp == body.otp {
+                    if x.otp == convert_otp {
                         if chrono::offset::Utc::now().timestamp() - x.timestamp < 300 {
                             let mut custom_query = String::from("UPDATE table_user SET ");
                             let mut multiple = false;
@@ -398,6 +406,11 @@ pub async fn delete_user(
     body: Json<CreateDeleteBody>,
     otp_state: Data<Arc<Mutex<Vec<OtpData>>>>,
 ) -> impl Responder {
+    let mut convert_otp:i32 = 0;
+    match body.otp.parse::<i32>() {
+        Ok(x) => convert_otp = x,
+        Err(_) => eprintln!(" Invalid Type")
+    }
     match otp_state.lock() {
         Ok(x) => {
             let rethrived_otp: Vec<OtpData> = x
@@ -408,7 +421,7 @@ pub async fn delete_user(
             let otpval = rethrived_otp.first();
             match otpval {
                 Some(x) => {
-                    if x.otp == body.otp {
+                    if x.otp == convert_otp {
                         if chrono::offset::Utc::now().timestamp() - x.timestamp < 300 {
                             match sqlx::query("DELETE from table_user WHERE email = $1")
                                 .bind(&body.email)

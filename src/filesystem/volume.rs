@@ -150,7 +150,7 @@ pub async fn get_volumes(
         }
         let volumes: Vec<Volume> = sys
             .disks()
-            .par_iter()
+            .iter()
             .map(|disk| {
                 let volume = Volume::from(disk);
                 if !cache_exists {
