@@ -20,6 +20,10 @@ use services::{change_user, delete_user, login_user, otp_form, otp_self, registe
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::{fs::File, io::BufReader};
+
+use rustls::{Certificate, PrivateKey, ServerConfig};
+use rustls_pemfile::{certs, pkcs8_private_keys};
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct CachedPath {
@@ -68,6 +72,8 @@ fn cors_middleware() -> Cors {
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
+    let config = load_rustls_config();
+
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let pool = PgPoolOptions::new()
         .max_connections(5)
@@ -113,7 +119,38 @@ async fn main() -> std::io::Result<()> {
             .service(download_file)
             .service(upload_file)
     })
-    .bind(("127.0.0.1", 8080))?
+    .bind_rustls_021("192.168.100.111:8080", config)?
     .run()
     .await
+}
+
+fn load_rustls_config() -> rustls::ServerConfig {
+    // init server config builder with safe defaults
+    let config = ServerConfig::builder()
+        .with_safe_defaults()
+        .with_no_client_auth();
+
+    // load TLS key/cert files
+    let cert_file = &mut BufReader::new(File::open("cert.pem").unwrap());
+    let key_file = &mut BufReader::new(File::open("key.pem").unwrap());
+
+    // convert files to key/cert objects
+    let cert_chain = certs(cert_file)
+        .unwrap()
+        .into_iter()
+        .map(Certificate)
+        .collect();
+    let mut keys: Vec<PrivateKey> = pkcs8_private_keys(key_file)
+        .unwrap()
+        .into_iter()
+        .map(PrivateKey)
+        .collect();
+
+    // exit if no keys could be parsed
+    if keys.is_empty() {
+        eprintln!("Could not locate PKCS 8 private keys.");
+        std::process::exit(1);
+    }
+
+    config.with_single_cert(cert_chain, keys.remove(0)).unwrap()
 }

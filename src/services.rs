@@ -11,13 +11,14 @@ use argon2::{
 };
 use hmac::{Hmac, Mac};
 use jwt::SignWithKey;
-use lettre::message::header::ContentType;
+use lettre::message::{header::ContentType, MultiPart, SinglePart};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{Message, SmtpTransport, Transport};
 use rand::{thread_rng, Rng};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use sqlx::{self, FromRow};
+
 
 
 //Data Struct
@@ -239,26 +240,60 @@ pub async fn otp_form(
     let hr_email = std::env::var("HR_EMAIL").expect("HR_EMAIL must be set!");
     let otp_email = std::env::var("OTP_EMAIL").expect("OTP_EMAIL must be set!");
     let otp_password = std::env::var("OTP_PASSWORD").expect("OTP_PASSWORD must be set!");
+
+    let format_plain = format!(
+        "
+    User Register Informational Data
+
+    Username\t    : {}
+    Email\t\t\t : {}
+    Phone Number\t: {}
+    Role\t\t\t  : {}
+
+
+    Requesting an OTP :\t{}
+    ",
+        body.username, body.email, body.phone_number, body.role, randotp
+    );
+
+    let format_html = format!( "<!DOCTYPE html>
+    <html lang=\"en\">
+    <head>
+        <meta charset=\"UTF-8\">
+        <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">
+        <title>Siber authentication</title>
+    </head>
+    <body>
+        <div style=\" align-items: center;\">
+            <h4 style=\"font-family: Arial, Helvetica, sans-serif;\">User Register Informational Data</h4>
+            <p>Username : {}</p>
+            <p>Email : {}</p>
+            <p>Phone Number : {}</p>
+            <p>Role : {}</p></br>
+            <p>Requesting an OTP : {}</p>
+        </div>
+    </body>
+    </html>",body.username, body.email, body.phone_number, body.role, randotp);
+
     let email = Message::builder()
         .from(format!("Siber Auth<{}>", otp_email).parse().unwrap())
         .to(format!("{}", hr_email).parse().unwrap())
         .subject("OTP Registration")
-        .header(ContentType::TEXT_PLAIN)
-        .body(format!(
-            "
-        New user with Informational Data
-
-        Username\t    : {}
-        Email\t\t\t : {}
-        Phone Number\t: {}
-        Role\t\t\t  : {}
-
-
-        Requesting an OTP :\t{}
-        ",
-            body.username, body.email, body.phone_number, body.role, randotp
-        ))
-        .unwrap();
+        .multipart(
+            MultiPart::alternative()
+            .singlepart(
+                SinglePart::builder()
+                        .header(ContentType::TEXT_PLAIN)
+                        .body(format_plain)
+            )
+            .singlepart(
+                SinglePart::builder()
+                        .header(ContentType::TEXT_HTML)
+                        .body(format_html)
+            )
+        )
+        .expect("failed to build email");
+        
 
     let creds = Credentials::new(otp_email.to_owned(), otp_password.to_owned());
 
@@ -266,7 +301,7 @@ pub async fn otp_form(
     let mailer = SmtpTransport::starttls_relay("smtp-mail.outlook.com")
         .unwrap()
         .credentials(creds)
-        .port(25)
+        .port(587)
         .build();
 
     // Send the email
@@ -292,17 +327,44 @@ pub async fn otp_self(
             timestamp: chrono::offset::Utc::now().timestamp(),
         });
     }
+    let format_plain = format!(
+        "Your OTP for Changing Informational Data : {}",
+        randotp
+    );
+
+    let format_html = format!( "<!DOCTYPE html>
+    <html lang=\"en\">
+    <head>
+        <meta charset=\"UTF-8\">
+        <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">
+        <title>Siber authentication</title>
+    </head>
+    <body>
+        <div style=\" align-items: center;\">
+            <h4 style=\"font-family: Arial, Helvetica, sans-serif;\">Your OTP for Changing Informational Data</h4>
+            <h2>{}</h2>
+        </div>
+    </body>
+    </html>",randotp);
     let otp_email = std::env::var("OTP_EMAIL").expect("OTP_EMAIL must be set!");
     let otp_password = std::env::var("OTP_PASSWORD").expect("OTP_PASSWORD must be set!");
     let email = Message::builder()
         .from(format!("Siber Auth<{}>", otp_email).parse().unwrap())
         .to(format!("{}", body.email).parse().unwrap())
         .subject("OTP Registration")
-        .header(ContentType::TEXT_PLAIN)
-        .body(format!(
-            "Your OTP for Changing Informational Data : {}",
-            randotp
-        ))
+        .multipart(
+            MultiPart::alternative()
+            .singlepart(
+                SinglePart::builder()
+                        .header(ContentType::TEXT_PLAIN)
+                        .body(format_plain)
+            )
+            .singlepart(
+                SinglePart::builder()
+                        .header(ContentType::TEXT_HTML)
+                        .body(format_html)
+            )
+        )
         .unwrap();
 
     let creds = Credentials::new(otp_email.to_owned(), otp_password.to_owned());
