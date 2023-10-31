@@ -134,11 +134,11 @@ pub async fn get_volumes(
     state_timer: Data<Arc<Mutex<Timer>>>
 ) -> impl Responder {
     println!("get_volumes tertrigger");
-    let mut m = {state_vol.lock().unwrap()};
+    let mut m: std::sync::MutexGuard<'_, Vec<Volume>> = {state_vol.lock().unwrap()};
     let n = m.first().unwrap();
     let mut interval = {state_timer.lock().unwrap()};
     
-    if &n.name == "" || chrono::Utc::now().timestamp() - interval.timestamp >= 120 {
+    if &n.name == "" || chrono::Utc::now().timestamp() - interval.timestamp >= 600 { // update caches every 10 mins
         interval.timestamp = chrono::Utc::now().timestamp();
         let mut sys = System::new_all();
         sys.refresh_all();

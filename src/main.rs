@@ -9,14 +9,14 @@ use sqlx::{postgres::PgPoolOptions, Pool, Postgres};
 
 use filesystem::explorer::{
     create_directory, create_file, delete_file, download_file, open_directory, rename_file,
-    upload_file,
+    upload_file, delete_folder,
 };
 
 use filesystem::volume::{get_volumes, Timer, Volume};
 use search::search_directory;
 use serde::{Deserialize, Serialize};
 
-use services::{change_user, delete_user, login_user, otp_form, otp_self, register_user, OtpData, OtpDataForm};
+use services::{change_user, delete_user, login_user, otp_form, otp_self, register_user, OtpData, OtpDataForm, list_role, permissions};
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -39,22 +39,6 @@ pub type VolumeCache = HashMap<String, Vec<CachedPath>>;
 pub struct AppState {
     system_cache: HashMap<String, VolumeCache>,
 }
-impl std::fmt::Debug for AppState {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Print the field values using the `write!` macro
-        write!(f, "AppState {{ system_cache: {:?} }}", self.system_cache)
-    }
-}
-
-impl std::fmt::Debug for CachedPath {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "CachedPath {{ file_path: {:?}, file_type: {:?} }}",
-            self.file_path, self.file_type
-        )
-    }
-}
 
 pub type StateSafe = Arc<Mutex<AppState>>;
 pub struct AppStatex {
@@ -67,6 +51,56 @@ fn cors_middleware() -> Cors {
         .allow_any_method()
         .allow_any_header()
         .max_age(3600) // Specify the maximum age of preflight requests (in seconds)
+}
+
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
+pub enum Role {
+    Kasatsiber,
+    Kasiops,
+    KatimCegah,
+    KatimTanggul,
+    KatimTindak,
+    KatimPulih,
+    StaffCegah,
+    StaffTanggul,
+    StaffTindak,
+    #[default]
+    StaffPulih,
+}
+
+impl std::fmt::Display for Role {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Role::Kasatsiber => write!(f, "Kasatsiber"),
+            Role::Kasiops => write!(f, "Kasiops"),
+            Role::KatimCegah => write!(f, "KatimCegah"),
+            Role::KatimTanggul => write!(f, "KatimTanggul"),
+            Role::KatimTindak => write!(f, "KatimTindak"),
+            Role::KatimPulih => write!(f, "KatimPulih"),
+            Role::StaffCegah => write!(f, "StaffCegah"),
+            Role::StaffTanggul => write!(f, "StaffTanggul"),
+            Role::StaffTindak => write!(f, "StaffTindak"),
+            Role::StaffPulih => write!(f, "StaffPulih"),
+        }
+    }
+}
+
+impl Role {
+    pub fn from_string(role_str: &str) -> Option<Role> {
+        match role_str {
+            "Kasatsiber" => Some(Role::Kasatsiber),
+            "Kasiops" => Some(Role::Kasiops),
+            "KatimCegah" => Some(Role::KatimCegah),
+            "KatimTanggul" => Some(Role::KatimTanggul),
+            "KatimTindak" => Some(Role::KatimTindak),
+            "KatimPulih" => Some(Role::KatimPulih),
+            "StaffCegah" => Some(Role::StaffCegah),
+            "StaffTanggul" => Some(Role::StaffTanggul),
+            "StaffTindak" => Some(Role::StaffTindak),
+            "StaffPulih" => Some(Role::StaffPulih),
+            _ => None,
+        }
+    }
 }
 
 #[actix_web::main]
@@ -103,6 +137,8 @@ async fn main() -> std::io::Result<()> {
             .app_data(Data::new(timer.clone()))
             .app_data(Data::new(otpstate.clone()))
             .app_data(Data::new(otpstate_form.clone()))
+            .service(permissions)
+            .service(list_role)
             .service(login_user)
             .service(register_user)
             .service(otp_form)
@@ -116,10 +152,11 @@ async fn main() -> std::io::Result<()> {
             .service(create_directory)
             .service(rename_file)
             .service(delete_file)
+            .service(delete_folder)
             .service(download_file)
             .service(upload_file)
     })
-    .bind_rustls_021("192.168.100.111:8080", config)?
+    .bind_rustls_021("192.168.100.77:8080", config)?
     .run()
     .await
 }

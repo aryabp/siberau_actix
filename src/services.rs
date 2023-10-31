@@ -1,7 +1,6 @@
-use std::sync::{Arc, Mutex};
-use crate::AppStatex;
+use crate::{AppStatex, Role};
 use actix_web::{
-    post,
+    get, post,
     web::{Data, Json},
     HttpResponse, Responder,
 };
@@ -18,8 +17,7 @@ use rand::{thread_rng, Rng};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use sqlx::{self, FromRow};
-
-
+use std::sync::{Arc, Mutex};
 
 //Data Struct
 
@@ -37,16 +35,16 @@ pub struct OtpDataForm {
     timestamp: i64,
     username: String,
     phone_number: String,
-    role: String,
+    role: Role,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct TokenClaims {
-    id_user: i32,
-    username: String,
-    email: String,
-    phone_number: String,
-    role: String,
+    pub id_user: i32,
+    pub username: String,
+    pub email: String,
+    pub phone_number: String,
+    pub role: Role,
 }
 
 #[derive(Serialize, FromRow)]
@@ -74,7 +72,7 @@ pub struct CreateOtpFormBody {
     pub username: String,
     pub email: String,
     pub phone_number: String,
-    pub role: String,
+    pub role: Role,
 }
 
 #[derive(Deserialize)]
@@ -83,7 +81,7 @@ pub struct CreateRegisterBody {
     pub email: String,
     pub password: String,
     pub phone_number: String,
-    pub role: String,
+    pub role: Role,
     pub otp: String,
 }
 
@@ -109,8 +107,43 @@ pub struct CreateLoginBody {
     pub password: String,
 }
 
-
 //Services
+
+#[get("/permissions")]
+pub async fn permissions() -> impl Responder {
+    HttpResponse::Ok()
+        .content_type(actix_web::http::header::ContentType::html())
+        .body(format!(
+            "<!DOCTYPE html>
+    <html lang=\"en\">
+    <head>
+        <meta charset=\"UTF-8\">
+        <title>Permissions</title>
+    </head>
+    <body>
+        <h1>Permissions</h1>
+        <script>window.location.replace('http://tauri.localhost')</script>
+    </body>
+    </html>"
+        ))
+}
+
+#[get("/listrole")]
+pub async fn list_role() -> impl Responder {
+    let roles = vec![
+        Role::Kasatsiber,
+        Role::Kasiops,
+        Role::KatimCegah,
+        Role::KatimTanggul,
+        Role::KatimTindak,
+        Role::KatimPulih,
+        Role::StaffCegah,
+        Role::StaffTanggul,
+        Role::StaffTindak,
+        Role::StaffPulih,
+    ];
+    HttpResponse::Ok().json(serde_json::json!(&roles))
+}
 
 #[post("/register")]
 pub async fn register_user(
@@ -118,22 +151,26 @@ pub async fn register_user(
     body: Json<CreateRegisterBody>,
     otp_state: Data<Arc<Mutex<Vec<OtpDataForm>>>>,
 ) -> impl Responder {
-    let mut convert_otp:i32 = 0;
+    let mut convert_otp: i32 = 0;
     match body.otp.parse::<i32>() {
         Ok(x) => convert_otp = x,
-        Err(_) => eprintln!(" Invalid Type")
+        Err(_) => eprintln!(" Invalid Type"),
     }
     match otp_state.lock() {
         Ok(x) => {
             let rethrived_otp: Vec<OtpDataForm> = x
                 .iter()
-                .filter(|f| *f.email == body.email )
+                .filter(|f| *f.email == body.email)
                 .cloned()
                 .collect();
             let otpval = rethrived_otp.first();
             match otpval {
                 Some(x) => {
-                    if x.otp == convert_otp && x.phone_number == body.phone_number && x.username == body.username && x.role == body.role {
+                    if x.otp == convert_otp
+                        && x.phone_number == body.phone_number
+                        && x.username == body.username
+                        && x.role == body.role
+                    {
                         if chrono::offset::Utc::now().timestamp() - x.timestamp < 300 {
                             let password = body.password.as_bytes();
                             let salt = SaltString::generate(&mut OsRng);
@@ -144,6 +181,7 @@ pub async fn register_user(
                             // Hash password to PHC string ($argon2id$v=19$...)
                             let password_hash =
                                 argon2.hash_password(password, &salt).unwrap().to_string();
+                          
                             match sqlx::query(
                         "INSERT INTO table_user (username,email,password,phone_number,role) VALUES ($1,$2,$3,$4,$5)",
                     )
@@ -156,10 +194,11 @@ pub async fn register_user(
                         .await
                     {
                         Ok(_) => HttpResponse::Ok().json("Credential sudah ditambahkan"),
-                        Err(_) => HttpResponse::InternalServerError().json("Failed to Register user"),
+                        Err(x) => {println!("{}",x);
+                            HttpResponse::InternalServerError().json("Failed to Register user")},
                     }
                         } else {
-                            HttpResponse::InternalServerError().json("OTP Expired, Request new OTP")
+                            HttpResponse::BadRequest().json("OTP Expired, Request new OTP")
                         }
                     } else {
                         HttpResponse::NotFound().json("Invalid OTP/ Data Form")
@@ -177,7 +216,6 @@ pub async fn login_user(state: Data<AppStatex>, body: Json<CreateLoginBody>) -> 
         Ok(secret) => Hmac::new_from_slice(secret.as_bytes()).expect("Invalid secret format!"),
         Err(_) => panic!("JWT_SECRET environment variable must be set!"),
     };
-    
     match sqlx::query_as::<_, Login>("SELECT * from table_user WHERE email=$1")
         .bind(body.email.to_string())
         .fetch_all(&state.db)
@@ -202,7 +240,7 @@ pub async fn login_user(state: Data<AppStatex>, body: Json<CreateLoginBody>) -> 
                         username: String::from(&login.username),
                         email: String::from(&login.email),
                         phone_number: String::from(&login.phone_number),
-                        role: String::from(&login.role),
+                        role: Role::from_string(&login.role).unwrap(),
                     };
                     let token_str = claims.sign_with_key(&jwt_secret).unwrap();
                     custom_respond.jwt = token_str;
@@ -234,7 +272,7 @@ pub async fn otp_form(
             timestamp: chrono::offset::Utc::now().timestamp(),
             username: body.username.to_string(),
             phone_number: body.phone_number.to_string(),
-            role:body.role.to_string(),
+            role: body.role.clone(),
         });
     }
     let hr_email = std::env::var("HR_EMAIL").expect("HR_EMAIL must be set!");
@@ -274,26 +312,24 @@ pub async fn otp_form(
         </div>
     </body>
     </html>",body.username, body.email, body.phone_number, body.role, randotp);
-
     let email = Message::builder()
         .from(format!("Siber Auth<{}>", otp_email).parse().unwrap())
         .to(format!("{}", hr_email).parse().unwrap())
         .subject("OTP Registration")
         .multipart(
             MultiPart::alternative()
-            .singlepart(
-                SinglePart::builder()
+                .singlepart(
+                    SinglePart::builder()
                         .header(ContentType::TEXT_PLAIN)
-                        .body(format_plain)
-            )
-            .singlepart(
-                SinglePart::builder()
+                        .body(format_plain),
+                )
+                .singlepart(
+                    SinglePart::builder()
                         .header(ContentType::TEXT_HTML)
-                        .body(format_html)
-            )
+                        .body(format_html),
+                ),
         )
         .expect("failed to build email");
-        
 
     let creds = Credentials::new(otp_email.to_owned(), otp_password.to_owned());
 
@@ -327,10 +363,7 @@ pub async fn otp_self(
             timestamp: chrono::offset::Utc::now().timestamp(),
         });
     }
-    let format_plain = format!(
-        "Your OTP for Changing Informational Data : {}",
-        randotp
-    );
+    let format_plain = format!("Your OTP for Changing Informational Data : {}", randotp);
 
     let format_html = format!( "<!DOCTYPE html>
     <html lang=\"en\">
@@ -354,16 +387,16 @@ pub async fn otp_self(
         .subject("OTP Registration")
         .multipart(
             MultiPart::alternative()
-            .singlepart(
-                SinglePart::builder()
+                .singlepart(
+                    SinglePart::builder()
                         .header(ContentType::TEXT_PLAIN)
-                        .body(format_plain)
-            )
-            .singlepart(
-                SinglePart::builder()
+                        .body(format_plain),
+                )
+                .singlepart(
+                    SinglePart::builder()
                         .header(ContentType::TEXT_HTML)
-                        .body(format_html)
-            )
+                        .body(format_html),
+                ),
         )
         .unwrap();
 
@@ -390,10 +423,10 @@ pub async fn change_user(
     body: Json<CreateSettingsBody>,
     otp_state: Data<Arc<Mutex<Vec<OtpData>>>>,
 ) -> impl Responder {
-    let mut convert_otp:i32 = 0;
+    let mut convert_otp: i32 = 0;
     match body.otp.parse::<i32>() {
         Ok(x) => convert_otp = x,
-        Err(_) => eprintln!(" Invalid Type")
+        Err(_) => eprintln!(" Invalid Type"),
     }
     match otp_state.lock() {
         Ok(x) => {
@@ -468,10 +501,10 @@ pub async fn delete_user(
     body: Json<CreateDeleteBody>,
     otp_state: Data<Arc<Mutex<Vec<OtpData>>>>,
 ) -> impl Responder {
-    let mut convert_otp:i32 = 0;
+    let mut convert_otp: i32 = 0;
     match body.otp.parse::<i32>() {
         Ok(x) => convert_otp = x,
-        Err(_) => eprintln!(" Invalid Type")
+        Err(_) => eprintln!(" Invalid Type"),
     }
     match otp_state.lock() {
         Ok(x) => {

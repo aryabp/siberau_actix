@@ -93,57 +93,62 @@ pub async fn search_directory(
     let state = state_mux.lock().unwrap();
     let query = body.query.to_lowercase();
 
-    let system_cache = state.system_cache.get(&body.mount_pnt).unwrap();
-    for (filename, paths) in system_cache {
-        for path in paths {
-            let file_type = &path.file_type;
-            let file_path = &path.file_path;
-
-            if !file_path.starts_with(&body.search_directory) {
-                continue;
+    match state.system_cache.get(&body.mount_pnt){
+        Some(system_cache) => {
+            for (filename, paths) in system_cache {
+                for path in paths {
+                    let file_type = &path.file_type;
+                    let file_path = &path.file_path;
+        
+                    if !file_path.starts_with(&body.search_directory) {
+                        continue;
+                    }
+        
+                    if file_type == "file" {
+                        check_file(
+                            &matcher,
+                            body.accept_files,
+                            filename,
+                            file_path,
+                            &body.extension,
+                            query.clone(),
+                            &mut results,
+                            &mut fuzzy_scores,
+                        );
+        
+                        continue;
+                    }
+        
+                    if !body.accept_directories {
+                        continue;
+                    }
+        
+                    let score = score_filename(&matcher, filename, &query);
+                    if score < MINIMUM_SCORE {
+                        continue;
+                    }
+        
+                    results.push(DirectoryChild::Directory(
+                        filename.to_string(),
+                        file_path.to_string(),
+                    ));
+                    fuzzy_scores.push(score);
+                }
             }
-
-            if file_type == "file" {
-                check_file(
-                    &matcher,
-                    body.accept_files,
-                    filename,
-                    file_path,
-                    &body.extension,
-                    query.clone(),
-                    &mut results,
-                    &mut fuzzy_scores,
-                );
-
-                continue;
-            }
-
-            if !body.accept_directories {
-                continue;
-            }
-
-            let score = score_filename(&matcher, filename, &query);
-            if score < MINIMUM_SCORE {
-                continue;
-            }
-
-            results.push(DirectoryChild::Directory(
-                filename.to_string(),
-                file_path.to_string(),
-            ));
-            fuzzy_scores.push(score);
-        }
+        
+            let end_time = Instant::now();
+            println!("Elapsed time: {:?}", end_time - start_time);
+            // Sort by best match first.
+            let mut tuples: Vec<(usize, _)> = fuzzy_scores.iter().enumerate().collect();
+            tuples.sort_by(|a, b| b.1.cmp(a.1));
+        
+            let sorted_result:Vec<DirectoryChild> = tuples
+                .into_iter()
+                .map(|(index, _)| results[index].clone())
+                .collect();
+            HttpResponse::Ok().json(sorted_result)
+        },
+        None => HttpResponse::InternalServerError().json("Volume haven't cached yet")
     }
-
-    let end_time = Instant::now();
-    println!("Elapsed time: {:?}", end_time - start_time);
-    // Sort by best match first.
-    let mut tuples: Vec<(usize, _)> = fuzzy_scores.iter().enumerate().collect();
-    tuples.sort_by(|a, b| b.1.cmp(a.1));
-
-    let sorted_result:Vec<DirectoryChild> = tuples
-        .into_iter()
-        .map(|(index, _)| results[index].clone())
-        .collect();
-    HttpResponse::Ok().json(sorted_result)
+    
 }
