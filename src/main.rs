@@ -16,7 +16,7 @@ use filesystem::volume::{get_volumes, Timer, Volume};
 use search::search_directory;
 use serde::{Deserialize, Serialize};
 
-use services::{change_user, delete_user, login_user, otp_form, otp_self, register_user, OtpData, OtpDataForm, list_role, permissions};
+use services::{change_user, delete_user, login_user, otp_form, otp_self, register_user, OtpData, OtpDataForm, list_role, permissions, get_accesslist, delete_access, enable_access, request_access};
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -155,6 +155,10 @@ async fn main() -> std::io::Result<()> {
             .service(delete_folder)
             .service(download_file)
             .service(upload_file)
+            .service(get_accesslist)
+            .service(delete_access)
+            .service(enable_access)
+            .service(request_access)
     })
     .bind_rustls_021("192.168.100.77:8080", config)?
     .run()

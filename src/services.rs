@@ -9,12 +9,13 @@ use argon2::{
     Argon2,
 };
 use hmac::{Hmac, Mac};
-use jwt::SignWithKey;
+use jwt::{SignWithKey, VerifyWithKey};
 use lettre::message::{header::ContentType, MultiPart, SinglePart};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{Message, SmtpTransport, Transport};
 use rand::{thread_rng, Rng};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use sha2::Sha256;
 use sqlx::{self, FromRow};
 use std::sync::{Arc, Mutex};
@@ -107,6 +108,33 @@ pub struct CreateLoginBody {
     pub password: String,
 }
 
+#[derive(Deserialize)]
+pub struct CreateGetAccessBody {
+    pub jwt: String,
+}
+
+#[derive(Deserialize)]
+pub struct CreateAccessBody {
+    pub jwt: String,
+    pub id_access: i32,
+}
+
+#[derive(Deserialize)]
+pub struct CreateReqAccessBody {
+    pub jwt: String,
+    pub req_filename: String,
+    pub req_path: String,
+}
+
+#[derive(Deserialize, Serialize, FromRow)]
+struct Access {
+    id_access: i32,
+    filename: String,
+    path: String,
+    requester: String,
+    owner: String,
+    is_enable: bool,
+}
 //Services
 
 #[get("/permissions")]
@@ -181,7 +209,7 @@ pub async fn register_user(
                             // Hash password to PHC string ($argon2id$v=19$...)
                             let password_hash =
                                 argon2.hash_password(password, &salt).unwrap().to_string();
-                          
+
                             match sqlx::query(
                         "INSERT INTO table_user (username,email,password,phone_number,role) VALUES ($1,$2,$3,$4,$5)",
                     )
@@ -406,7 +434,7 @@ pub async fn otp_self(
     let mailer = SmtpTransport::starttls_relay("smtp-mail.outlook.com")
         .unwrap()
         .credentials(creds)
-        .port(25)
+        .port(587)
         .build();
 
     // Send the email
@@ -538,5 +566,152 @@ pub async fn delete_user(
             }
         }
         Err(_) => HttpResponse::NotFound().json("No OTP dataset"),
+    }
+}
+
+#[post("/getaccesslist")]
+pub async fn get_accesslist(
+    state: Data<AppStatex>,
+    body: Json<CreateGetAccessBody>,
+) -> impl Responder {
+    let jwt_secret: Hmac<Sha256> = match std::env::var("JWT_SECRET") {
+        Ok(secret) => Hmac::new_from_slice(secret.as_bytes()).expect("Invalid secret format!"),
+        Err(_) => panic!("JWT_SECRET environment variable must be set!"),
+    };
+
+    match body.jwt.verify_with_key(&jwt_secret) {
+        Ok(fe) => {
+            let claim: TokenClaims = fe;
+            //let drop_bentar   = claim.id_user as i64;
+            
+            match sqlx::query_as::<_, Access>(
+                "SELECT id_access, filename , path , owner , username AS requester , is_enable from table_access AS ta INNER JOIN table_user AS tu ON ta.requester = tu.id_user WHERE owner = $1  OR requester = $2 ",
+            )
+            .bind(claim.role.to_string())
+            .bind(claim.id_user)
+            .fetch_all(&state.db)
+            .await
+            {
+                Ok(access_li) => HttpResponse::Ok().json(json!(access_li)),
+                Err(er) => HttpResponse::InternalServerError().json(er.to_string()),
+            }
+        }
+        Err(_) => HttpResponse::BadRequest().json("Access denied"),
+    }
+}
+
+#[post("/deleteaccess")]
+pub async fn delete_access(state: Data<AppStatex>, body: Json<CreateAccessBody>) -> impl Responder {
+    let jwt_secret: Hmac<Sha256> = match std::env::var("JWT_SECRET") {
+        Ok(secret) => Hmac::new_from_slice(secret.as_bytes()).expect("Invalid secret format!"),
+        Err(_) => panic!("JWT_SECRET environment variable must be set!"),
+    };
+
+    match body.jwt.verify_with_key(&jwt_secret) {
+        Ok(fe) => {
+            let claim: TokenClaims = fe;
+            match sqlx::query("DELETE from table_access WHERE id_access = $1 AND ( owner = $2 OR requester = $3 ) ")
+                .bind(&body.id_access)
+                .bind(claim.role.to_string())
+                .bind(claim.id_user)
+                .fetch_all(&state.db)
+                .await
+            {
+                Ok(_) => HttpResponse::Ok().json("Access deleted"),
+                Err(_) => HttpResponse::InternalServerError().json("Failed to delete Access"),
+            }
+        }
+        Err(_) => HttpResponse::BadRequest().json("Access denied"),
+    }
+}
+
+#[post("/enableaccess")]
+pub async fn enable_access(state: Data<AppStatex>, body: Json<CreateAccessBody>) -> impl Responder {
+    let jwt_secret: Hmac<Sha256> = match std::env::var("JWT_SECRET") {
+        Ok(secret) => Hmac::new_from_slice(secret.as_bytes()).expect("Invalid secret format!"),
+        Err(_) => panic!("JWT_SECRET environment variable must be set!"),
+    };
+
+    match body.jwt.verify_with_key(&jwt_secret) {
+        Ok(fe) => {
+            let claim: TokenClaims = fe;
+            match sqlx::query(
+                "UPDATE table_access SET is_enable = NOT is_enable WHERE id_access = $1 AND owner = $2",
+            )
+            .bind(&body.id_access)
+            .bind(claim.role.to_string())
+            .fetch_all(&state.db)
+            .await
+            {
+                Ok(_) => HttpResponse::Ok().json("Access changed"),
+                Err(_) => HttpResponse::InternalServerError().json("Failed to change access"),
+            }
+        }
+        Err(_) => HttpResponse::BadRequest().json("Access denied"),
+    }
+}
+
+#[post("/requestaccess")]
+pub async fn request_access(state: Data<AppStatex>, body: Json<CreateReqAccessBody>) -> impl Responder {
+    let jwt_secret: Hmac<Sha256> = match std::env::var("JWT_SECRET") {
+        Ok(secret) => Hmac::new_from_slice(secret.as_bytes()).expect("Invalid secret format!"),
+        Err(_) => panic!("JWT_SECRET environment variable must be set!"),
+    };
+    let mut owner = String::from("Invalid dir");
+    match &body.req_path.find(&{std::env::var("CEGAH_DIRECTORY").expect("SET directory a")}) {
+        Some(_) => owner =  "KatimCegah".to_string(),
+        None => ()
+    };
+    match &body.req_path.find(&{std::env::var("ALT_CEGAH_DIRECTORY").expect("SET directory a")}) {
+        Some(_) => owner =  "KatimCegah".to_string(),
+        None => ()
+    };
+    match &body.req_path.find(&{std::env::var("TANGGUL_DIRECTORY").expect("SET directory a")}) {
+        Some(_) => owner =  "KatimTanggul".to_string(),
+        None => ()
+    };
+    match &body.req_path.find(&{std::env::var("ALT_TANGGUL_DIRECTORY").expect("SET directory a")}) {
+        Some(_) => owner =  "KatimTanggul".to_string(),
+        None => ()
+    };
+    match &body.req_path.find(&{std::env::var("TINDAK_DIRECTORY").expect("SET directory a")}) {
+        Some(_) => owner =  "KatimTindak".to_string(),
+        None => ()
+    };
+    match &body.req_path.find(&{std::env::var("ALT_TINDAK_DIRECTORY").expect("SET directory a")}) {
+        Some(_) => owner =  "KatimTindak".to_string(),
+        None => ()
+    };
+    match &body.req_path.find(&{std::env::var("PULIH_DIRECTORY").expect("SET directory a")}) {
+        Some(_) => owner =  "KatimPulih".to_string(),
+        None => ()
+    };
+    match &body.req_path.find(&{std::env::var("ALT_PULIH_DIRECTORY").expect("SET directory a")}) {
+        Some(_) => owner =  "KatimPulih".to_string(),
+        None => ()
+    };
+    if owner == "Invalid dir" {
+        HttpResponse::BadRequest().json(owner)
+    } else {
+        match body.jwt.verify_with_key(&jwt_secret) {
+            Ok(fe) => {
+                let claim: TokenClaims = fe;
+                match sqlx::query(
+                    "INSERT INTO table_access (filename,path,requester,owner,is_enable) VALUES ($1, $2, $3, $4, $5)",
+                )
+                .bind(&body.req_filename)
+                .bind(&body.req_path)
+                .bind(claim.id_user)
+                .bind(owner)
+                .bind(false)
+                .fetch_all(&state.db)
+                .await
+                {
+                    Ok(_) => HttpResponse::Ok().json("Access changed"),
+                    Err(_) => HttpResponse::InternalServerError().json("Failed to change access"),
+                }
+            }
+            Err(_) => HttpResponse::BadRequest().json("Access denied"),
+        }
     }
 }
